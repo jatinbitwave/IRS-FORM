@@ -683,4 +683,586 @@ def create_high_quality_complete_pdf(buffer, transactions, part_type, taxpayer_n
         # Create document with proper margins
         doc = SimpleDocTemplate(
             buffer,
-            pagesize
+            pagesize=letter,
+            rightMargin=0.5*inch,
+            leftMargin=0.5*inch,
+            topMargin=0.5*inch,
+            bottomMargin=0.5*inch
+        )
+        
+        # Build story (content elements)
+        story = []
+        styles = getSampleStyleSheet()
+        
+        # Custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=18,
+            spaceAfter=30,
+            alignment=TA_CENTER,
+            textColor=colors.black
+        )
+        
+        header_style = ParagraphStyle(
+            'CustomHeader',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=20,
+            alignment=TA_LEFT,
+            textColor=colors.black
+        )
+        
+        info_style = ParagraphStyle(
+            'InfoStyle',
+            parent=styles['Normal'],
+            fontSize=10,
+            spaceAfter=10,
+            alignment=TA_LEFT
+        )
+        
+        # Form header
+        story.append(Paragraph(f"Form 8949 - Sales and Other Dispositions of Capital Assets", title_style))
+        story.append(Paragraph(f"Tax Year {tax_year}", header_style))
+        story.append(Spacer(1, 20))
+        
+        # Taxpayer information
+        story.append(Paragraph(f"<b>Taxpayer Name:</b> {taxpayer_name}", info_style))
+        story.append(Paragraph(f"<b>Social Security Number:</b> {taxpayer_ssn}", info_style))
+        story.append(Paragraph(f"<b>Generated from:</b> Bitwave Actions Report", info_style))
+        story.append(Paragraph(f"<b>Generated on:</b> {datetime.now().strftime('%B %d, %Y at %I:%M %p')}", info_style))
+        story.append(Spacer(1, 20))
+        
+        # Part header
+        if part_type == "Part I":
+            story.append(Paragraph("Part I - Short-Term Capital Gains and Losses", header_style))
+            story.append(Paragraph("Assets held one year or less", info_style))
+        else:
+            story.append(Paragraph("Part II - Long-Term Capital Gains and Losses", header_style))
+            story.append(Paragraph("Assets held more than one year", info_style))
+        
+        story.append(Paragraph(f"<b>Box Type:</b> {box_type}", info_style))
+        story.append(Spacer(1, 20))
+        
+        # Create transaction table
+        table_data = []
+        
+        # Table headers
+        headers = [
+            'Description\nof Property',
+            'Date\nAcquired',
+            'Date\nSold',
+            'Proceeds\n(Sales Price)',
+            'Cost or Other\nBasis',
+            'Code(s)',
+            'Adjustment',
+            'Gain or (Loss)'
+        ]
+        table_data.append(headers)
+        
+        # Add transaction data
+        for transaction in transactions:
+            row = [
+                transaction['description'],
+                transaction['date_acquired'].strftime('%m/%d/%Y'),
+                transaction['date_sold'].strftime('%m/%d/%Y'),
+                f"${transaction['proceeds']:,.2f}",
+                f"${transaction['cost_basis']:,.2f}",
+                "",  # Code column - typically blank for crypto
+                "",  # Adjustment column - typically blank
+                f"${transaction['gain_loss']:,.2f}" if transaction['gain_loss'] >= 0 
+                else f"(${abs(transaction['gain_loss']):,.2f})"
+            ]
+            table_data.append(row)
+        
+        # Add totals row if this is the last page
+        if page_num == total_pages:
+            total_proceeds = sum(t['proceeds'] for t in all_transactions)
+            total_basis = sum(t['cost_basis'] for t in all_transactions)
+            total_gain_loss = sum(t['gain_loss'] for t in all_transactions)
+            
+            totals_row = [
+                'TOTALS',
+                '',
+                '',
+                f"${total_proceeds:,.2f}",
+                f"${total_basis:,.2f}",
+                '',
+                '',
+                f"${total_gain_loss:,.2f}" if total_gain_loss >= 0 
+                else f"(${abs(total_gain_loss):,.2f})"
+            ]
+            table_data.append(totals_row)
+        
+        # Create and style the table
+        table = Table(table_data, colWidths=[1.2*inch, 0.8*inch, 0.8*inch, 1*inch, 1*inch, 0.5*inch, 0.7*inch, 1*inch])
+        
+        table_style = TableStyle([
+            # Header row styling
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            
+            # Data rows styling
+            ('ALIGN', (0, 1), (0, -1), 'LEFT'),      # Description - left align
+            ('ALIGN', (1, 1), (2, -1), 'CENTER'),    # Dates - center align
+            ('ALIGN', (3, 1), (-1, -1), 'RIGHT'),    # Numbers - right align
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 7),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightblue]),
+            
+            # Grid lines
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('LINEBELOW', (0, 0), (-1, 0), 2, colors.black),
+            
+            # Totals row styling (if present)
+            ('BACKGROUND', (0, -1), (-1, -1), colors.lightyellow) if page_num == total_pages else ('BACKGROUND', (0, -1), (-1, -1), colors.white),
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold') if page_num == total_pages else ('FONTNAME', (0, -1), (-1, -1), 'Helvetica'),
+        ])
+        
+        table.setStyle(table_style)
+        story.append(table)
+        
+        # Add page footer information
+        story.append(Spacer(1, 30))
+        if total_pages > 1:
+            story.append(Paragraph(f"Page {page_num} of {total_pages}", info_style))
+        
+        # Summary information
+        story.append(Spacer(1, 20))
+        story.append(Paragraph("<b>Summary Information:</b>", header_style))
+        
+        page_proceeds = sum(t['proceeds'] for t in transactions)
+        page_basis = sum(t['cost_basis'] for t in transactions)
+        page_gain_loss = sum(t['gain_loss'] for t in transactions)
+        
+        story.append(Paragraph(f"• Transactions on this page: {len(transactions)}", info_style))
+        story.append(Paragraph(f"• Page proceeds: ${page_proceeds:,.2f}", info_style))
+        story.append(Paragraph(f"• Page cost basis: ${page_basis:,.2f}", info_style))
+        story.append(Paragraph(f"• Page net gain/loss: ${page_gain_loss:,.2f}", info_style))
+        
+        if page_num == total_pages:
+            total_proceeds = sum(t['proceeds'] for t in all_transactions)
+            total_basis = sum(t['cost_basis'] for t in all_transactions)
+            total_gain_loss = sum(t['gain_loss'] for t in all_transactions)
+            
+            story.append(Spacer(1, 10))
+            story.append(Paragraph("<b>Total Summary (All Pages):</b>", header_style))
+            story.append(Paragraph(f"• Total transactions: {len(all_transactions)}", info_style))
+            story.append(Paragraph(f"• Total proceeds: ${total_proceeds:,.2f}", info_style))
+            story.append(Paragraph(f"• Total cost basis: ${total_basis:,.2f}", info_style))
+            story.append(Paragraph(f"• Total net gain/loss: ${total_gain_loss:,.2f}", info_style))
+        
+        # Build the PDF
+        doc.build(story)
+        return True
+        
+    except Exception as e:
+        st.error(f"Error creating high-quality PDF: {e}")
+        return False
+
+def create_form_with_official_template_enhanced(buffer, transactions, part_type, taxpayer_name, taxpayer_ssn, tax_year, box_type, page_num, total_pages, all_transactions):
+    """Enhanced version of official template creation with better PDF handling"""
+    try:
+        # Get official IRS Form 8949 PDF
+        official_pdf = get_official_form_8949_enhanced(tax_year)
+        if not official_pdf:
+            return False
+        
+        # Read the official PDF
+        official_pdf_stream = io.BytesIO(official_pdf)
+        pdf_reader = PyPDF2.PdfReader(official_pdf_stream)
+        
+        # Select appropriate page (Part I = page 1, Part II = page 2)
+        template_page_num = 0 if part_type == "Part I" else 1
+        if template_page_num >= len(pdf_reader.pages):
+            template_page_num = 0
+        
+        template_page = pdf_reader.pages[template_page_num]
+        
+        # Create overlay with transaction data
+        overlay_buffer = io.BytesIO()
+        c = canvas.Canvas(overlay_buffer, pagesize=letter)
+        width, height = letter
+        
+        # Enhanced positioning for different tax years and parts
+        if part_type == "Part I":
+            # Part I (Page 1) positioning - adjusted for better alignment
+            name_field_x = 75
+            name_field_y = 690
+            ssn_field_x = 550
+            ssn_field_y = 690
+            checkbox_base_y = 552
+            table_start_y = 425
+        else:  # Part II
+            # Part II (Page 2) positioning - adjusted for better alignment
+            name_field_x = 75
+            name_field_y = 725
+            ssn_field_x = 550
+            ssn_field_y = 725
+            checkbox_base_y = 587
+            table_start_y = 465
+        
+        checkbox_x = 52
+        
+        # Enhanced column positions with better spacing
+        col_positions = {
+            'description': 50,
+            'date_acquired': 195,
+            'date_sold': 255,
+            'proceeds': 330,
+            'cost_basis': 400,
+            'code': 455,
+            'adjustment': 495,
+            'gain_loss': 565
+        }
+        
+        # Row spacing to match form's ruled line spacing
+        row_height = 24.0
+        
+        # Fill taxpayer information with better font handling
+        c.setFont("Helvetica", 10)
+        c.drawString(name_field_x, name_field_y, taxpayer_name[:50])  # Increased character limit
+        c.drawRightString(ssn_field_x, ssn_field_y, taxpayer_ssn)
+        
+        # Check appropriate box with better positioning
+        c.setFont("Helvetica", 12)
+        box_letter = box_type.split()[1]  # Extract A, B, or C
+        
+        if part_type == "Part I":
+            if box_letter == "A":
+                c.drawString(checkbox_x, checkbox_base_y, "✓")
+            elif box_letter == "B": 
+                c.drawString(checkbox_x, checkbox_base_y - 20, "✓")
+            elif box_letter == "C":
+                c.drawString(checkbox_x, checkbox_base_y - 40, "✓")
+        else:  # Part II - maps A->D, B->E, C->F
+            if box_letter == "A":  # Maps to Box D for long-term
+                c.drawString(checkbox_x, checkbox_base_y, "✓")
+            elif box_letter == "B":  # Maps to Box E for long-term
+                c.drawString(checkbox_x, checkbox_base_y - 20, "✓")
+            elif box_letter == "C":  # Maps to Box F for long-term
+                c.drawString(checkbox_x, checkbox_base_y - 40, "✓")
+        
+        # Enhanced font size for better readability
+        c.setFont("Helvetica", 6)
+        
+        # Fill transaction data with enhanced formatting
+        for i, transaction in enumerate(transactions[:14]):  # Maximum 14 transactions per page
+            y_pos = table_start_y - (i * row_height)
+            
+            # Enhanced description formatting
+            description = transaction['description'][:25]  # Increased length
+            date_acquired = transaction['date_acquired'].strftime('%m/%d/%Y')
+            date_sold = transaction['date_sold'].strftime('%m/%d/%Y')
+            
+            # Column (a) - Description: Left-aligned with better truncation
+            c.drawString(col_positions['description'], y_pos, description)
+            
+            # Column (b) - Date acquired: Centered with better positioning
+            date_acq_width = c.stringWidth(date_acquired)
+            c.drawString(col_positions['date_acquired'] - date_acq_width/2, y_pos, date_acquired)
+            
+            # Column (c) - Date sold: Centered with better positioning
+            date_sold_width = c.stringWidth(date_sold)
+            c.drawString(col_positions['date_sold'] - date_sold_width/2, y_pos, date_sold)
+            
+            # Enhanced number formatting with better truncation logic
+            proceeds_text = format_currency_for_form(transaction['proceeds'])
+            c.drawRightString(col_positions['proceeds'], y_pos, proceeds_text)
+            
+            basis_text = format_currency_for_form(transaction['cost_basis'])
+            c.drawRightString(col_positions['cost_basis'], y_pos, basis_text)
+            
+            # Column (f) - Code: Leave blank for crypto transactions
+            
+            # Column (g) - Adjustment: Leave blank (no adjustments for crypto)
+            
+            # Column (h) - Gain/Loss with enhanced formatting
+            gain_loss = transaction['gain_loss']
+            gain_loss_text = format_currency_for_form(gain_loss, show_parentheses=True)
+            c.drawRightString(col_positions['gain_loss'], y_pos, gain_loss_text)
+        
+        # Enhanced totals formatting on final page
+        if page_num == total_pages and len(transactions) > 0:
+            totals_y = table_start_y - (14 * row_height) - 15
+            
+            # Calculate totals for ALL transactions
+            total_proceeds = sum(t['proceeds'] for t in all_transactions)
+            total_basis = sum(t['cost_basis'] for t in all_transactions)
+            total_gain_loss = sum(t['gain_loss'] for t in all_transactions)
+            
+            # Use bold font for totals
+            c.setFont("Helvetica-Bold", 6)
+            
+            # Draw totals with enhanced formatting
+            c.drawRightString(col_positions['proceeds'], totals_y, format_currency_for_form(total_proceeds))
+            c.drawRightString(col_positions['cost_basis'], totals_y, format_currency_for_form(total_basis))
+            c.drawRightString(col_positions['gain_loss'], totals_y, format_currency_for_form(total_gain_loss, show_parentheses=True))
+        
+        c.save()
+        
+        # Enhanced PDF merging
+        overlay_buffer.seek(0)
+        overlay_reader = PyPDF2.PdfReader(overlay_buffer)
+        overlay_page = overlay_reader.pages[0]
+        
+        # Combine template and data overlay
+        template_page.merge_page(overlay_page)
+        
+        # Write final PDF to buffer with enhanced settings
+        pdf_writer = PyPDF2.PdfWriter()
+        pdf_writer.add_page(template_page)
+        
+        # Add metadata
+        pdf_writer.add_metadata({
+            '/Title': f'Form 8949 {tax_year} - {part_type}',
+            '/Author': 'Bitwave Form Generator',
+            '/Subject': f'Tax Form 8949 for {taxpayer_name}',
+            '/Creator': 'Enhanced Bitwave PDF Generator'
+        })
+        
+        pdf_writer.write(buffer)
+        return True
+        
+    except Exception as e:
+        st.error(f"Error creating enhanced official template: {e}")
+        return False
+
+def get_official_form_8949_enhanced(tax_year):
+    """Enhanced version with better error handling and fallbacks"""
+    irs_urls = {
+        2024: "https://www.irs.gov/pub/irs-pdf/f8949.pdf",
+        2023: "https://www.irs.gov/pub/irs-prior/f8949--2023.pdf", 
+        2022: "https://www.irs.gov/pub/irs-prior/f8949--2022.pdf",
+        2021: "https://www.irs.gov/pub/irs-prior/f8949--2021.pdf",
+        2020: "https://www.irs.gov/pub/irs-prior/f8949--2020.pdf"
+    }
+    
+    url = irs_urls.get(tax_year, irs_urls[2024])
+    
+    try:
+        # Enhanced request with better headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, timeout=30, headers=headers)
+        if response.status_code == 200 and response.content:
+            # Validate that we got a PDF
+            if response.content.startswith(b'%PDF'):
+                return response.content
+            else:
+                st.warning("Downloaded file is not a valid PDF")
+        else:
+            st.warning(f"HTTP {response.status_code}: Could not download form from IRS website")
+    except requests.exceptions.Timeout:
+        st.warning("Timeout downloading official form - will use custom template")
+    except Exception as e:
+        st.warning(f"Could not download official form: {e}")
+    
+    return None
+
+def format_currency_for_form(amount, show_parentheses=False):
+    """Enhanced currency formatting for form fields"""
+    if amount == 0:
+        return "0.00"
+    
+    abs_amount = abs(amount)
+    
+    # Format with appropriate precision
+    if abs_amount >= 1000000:  # Millions
+        formatted = f"{abs_amount:,.0f}"
+    elif abs_amount >= 1000:   # Thousands
+        formatted = f"{abs_amount:,.2f}"
+    else:                      # Under 1000
+        formatted = f"{abs_amount:.2f}"
+    
+    # Handle negative values
+    if amount < 0 and show_parentheses:
+        return f"({formatted})"
+    elif amount < 0:
+        return f"-{formatted}"
+    else:
+        return formatted
+
+def create_professional_custom_form(buffer, transactions, part_type, taxpayer_name, taxpayer_ssn, tax_year, box_type, page_num, total_pages, all_transactions):
+    """Create a professional custom form with enhanced layout"""
+    try:
+        c = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter
+        
+        # Enhanced header design
+        c.setFillColor(colors.darkblue)
+        c.rect(40, height - 80, width - 80, 50, fill=True, stroke=False)
+        
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 18)
+        c.drawCentredText(width/2, height - 55, f"Form 8949 ({tax_year})")
+        c.setFont("Helvetica", 12)
+        c.drawCentredText(width/2, height - 70, "Sales and Other Dispositions of Capital Assets")
+        
+        # Reset color for rest of form
+        c.setFillColor(colors.black)
+        
+        # Enhanced source attribution
+        c.setFont("Helvetica", 8)
+        c.drawString(50, height - 90, "Generated from Bitwave Actions Report")
+        c.drawRightString(width - 50, height - 90, f"Generated: {datetime.now().strftime('%m/%d/%Y %I:%M %p')}")
+        
+        # Enhanced taxpayer information section
+        c.setFillColor(colors.lightgrey)
+        c.rect(40, height - 130, width - 80, 30, fill=True, stroke=True)
+        c.setFillColor(colors.black)
+        
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(50, height - 115, f"Taxpayer: {taxpayer_name}")
+        c.drawString(350, height - 115, f"SSN: {taxpayer_ssn}")
+        c.drawString(50, height - 125, f"Tax Year: {tax_year}")
+        c.drawString(350, height - 125, f"Page: {page_num} of {total_pages}")
+        
+        # Enhanced part header
+        c.setFont("Helvetica-Bold", 14)
+        if part_type == "Part I":
+            c.drawString(50, height - 160, "Part I - Short-Term Capital Gains and Losses")
+            c.setFont("Helvetica", 10)
+            c.drawString(50, height - 175, "Assets held one year or less")
+        else:
+            c.drawString(50, height - 160, "Part II - Long-Term Capital Gains and Losses")
+            c.setFont("Helvetica", 10)
+            c.drawString(50, height - 175, "Assets held more than one year")
+        
+        # Box type with enhanced styling
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(50, height - 195, f"☑ {box_type}")
+        
+        # Enhanced table with better spacing and alignment
+        table_y_start = height - 230
+        
+        # Table headers with enhanced styling
+        c.setFillColor(colors.darkblue)
+        c.rect(40, table_y_start - 25, width - 80, 25, fill=True, stroke=True)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 8)
+        
+        headers = [
+            ("Description of Property", 50, 120),
+            ("Date Acquired", 170, 70), 
+            ("Date Sold", 240, 70),
+            ("Proceeds", 310, 80),
+            ("Cost Basis", 390, 80),
+            ("Code", 470, 40),
+            ("Adjustment", 510, 70),
+            ("Gain/(Loss)", 580, 80)
+        ]
+        
+        for header, x_pos, width_col in headers:
+            c.drawString(x_pos, table_y_start - 15, header)
+        
+        # Reset color for data rows
+        c.setFillColor(colors.black)
+        
+        # Enhanced transaction data with alternating row colors
+        row_height = 18
+        c.setFont("Helvetica", 7)
+        
+        for i, transaction in enumerate(transactions[:14]):
+            y_pos = table_y_start - 45 - (i * row_height)
+            
+            # Alternating row background
+            if i % 2 == 0:
+                c.setFillColor(colors.lightblue)
+                c.rect(40, y_pos - 2, width - 80, row_height - 2, fill=True, stroke=False)
+            
+            c.setFillColor(colors.black)
+            
+            # Enhanced data formatting
+            description = transaction['description'][:28]
+            date_acquired = transaction['date_acquired'].strftime('%m/%d/%Y')
+            date_sold = transaction['date_sold'].strftime('%m/%d/%Y')
+            
+            c.drawString(50, y_pos, description)
+            c.drawCentredText(205, y_pos, date_acquired)
+            c.drawCentredText(275, y_pos, date_sold)
+            c.drawRightString(385, y_pos, format_currency_for_form(transaction['proceeds']))
+            c.drawRightString(465, y_pos, format_currency_for_form(transaction['cost_basis']))
+            c.drawCentredText(490, y_pos, "")  # Code column
+            c.drawCentredText(545, y_pos, "")  # Adjustment column
+            c.drawRightString(650, y_pos, format_currency_for_form(transaction['gain_loss'], show_parentheses=True))
+        
+        # Enhanced totals section on final page
+        if page_num == total_pages and len(transactions) > 0:
+            totals_y = table_y_start - 45 - (14 * row_height) - 10
+            
+            # Totals background
+            c.setFillColor(colors.yellow)
+            c.rect(40, totals_y - 2, width - 80, row_height - 2, fill=True, stroke=True)
+            c.setFillColor(colors.black)
+            
+            # Calculate totals
+            total_proceeds = sum(t['proceeds'] for t in all_transactions)
+            total_basis = sum(t['cost_basis'] for t in all_transactions)
+            total_gain_loss = sum(t['gain_loss'] for t in all_transactions)
+            
+            c.setFont("Helvetica-Bold", 8)
+            c.drawString(50, totals_y, "TOTALS")
+            c.drawRightString(385, totals_y, format_currency_for_form(total_proceeds))
+            c.drawRightString(465, totals_y, format_currency_for_form(total_basis))
+            c.drawRightString(650, totals_y, format_currency_for_form(total_gain_loss, show_parentheses=True))
+        
+        # Enhanced footer with summary
+        footer_y = 60
+        c.setFont("Helvetica", 8)
+        
+        page_summary = f"Page {page_num}: {len(transactions)} transactions"
+        if page_num == total_pages:
+            page_summary += f" | Total: {len(all_transactions)} transactions"
+        
+        c.drawString(50, footer_y, page_summary)
+        c.drawRightString(width - 50, footer_y, f"Bitwave Form Generator - {datetime.now().strftime('%m/%d/%Y')}")
+        
+        # Add border around entire form
+        c.setStrokeColor(colors.darkblue)
+        c.setLineWidth(2)
+        c.rect(30, 30, width - 60, height - 60, fill=False, stroke=True)
+        
+        c.save()
+        return True
+        
+    except Exception as e:
+        st.error(f"Error creating professional custom form: {e}")
+        return False
+
+def create_zip_file(pdf_files):
+    """Create ZIP file containing all PDFs with enhanced metadata"""
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zip_file:
+        # Add a readme file with information
+        readme_content = f"""Form 8949 Generated from Bitwave Actions Report
+
+Generated on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}
+Total PDF files: {len(pdf_files)}
+
+Files included:
+"""
+        for pdf_file in pdf_files:
+            readme_content += f"- {pdf_file['filename']}\n"
+            zip_file.writestr(pdf_file['filename'], pdf_file['content'])
+        
+        readme_content += """
+Instructions:
+1. Review each PDF for accuracy
+2. Print or save as needed for tax filing
+3. Consult with a tax professional if you have questions
+
+Generated by: Enhanced Bitwave Form 8949 Generator
+"""
+        
+        zip_file.writestr("README.txt", readme_content)
+    
+    return zip_buffer.getvalue()
+
+if __name__ == "__main__":
+    main()
