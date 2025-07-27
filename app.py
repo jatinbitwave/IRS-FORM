@@ -11,6 +11,8 @@ import requests
 import PyPDF2
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from PIL import Image
+import base64
 
 def main():
     """Main Streamlit application for Form 8949 generation from Bitwave actions reports"""
@@ -78,30 +80,10 @@ def main():
         - **longTermGainLoss**: Long-term gain/loss from Bitwave
         - **txnExchangeRate**: Exchange rate at transaction time (backup for proceeds calculation)
         
-        ### Timestamp Handling:
-        The script handles multiple timestamp formats:
-        - "2023-12-31 22:01:13 UTC" → "2023-12-31 22:01:13"
-        - Unix timestamps in seconds
-        - Automatic UTC removal and formatting
-        
-        ### Proceeds Calculation:
-        The script will use **fairMarketValueDisposed** as proceeds, or calculate from **assetUnitAdj × txnExchangeRate** if needed.
-        
-        ### How to Export from Bitwave:
-        1. Log into your Bitwave account
-        2. Navigate to Reports → Actions Report
-        3. Select your desired date range
-        4. Export as CSV format
-        5. Upload the CSV file below
-        
-        ### Features:
-        - ✅ Automatically filters 'sell' actions from your Bitwave export
-        - ✅ Maps lot IDs to determine accurate acquisition dates
-        - ✅ Uses Bitwave's short/long-term classification for accuracy
-        - ✅ Validates calculated gains against Bitwave's calculations
-        - ✅ Generates official IRS Form 8949 with precise field mapping
-        - ✅ Handles multiple pages and cryptocurrencies
-        - ✅ Flexible timestamp format handling
+        ### PDF Generation Options:
+        - **High-Quality PDF**: Creates a single, complete PDF with all data and formatting
+        - **Form-Fillable PDF**: Uses official IRS forms with your data filled in
+        - **Vector Graphics**: Ensures text remains selectable and printable
         """)
     
     # Taxpayer Information Section
@@ -122,7 +104,7 @@ def main():
     # Form Configuration
     st.markdown('<h2 class="section-header">⚙️ Form Configuration</h2>', unsafe_allow_html=True)
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         tax_year = st.selectbox(
             "Tax Year",
@@ -140,6 +122,18 @@ def main():
             ],
             index=0,
             help="For crypto transactions, Box B is typically correct as exchanges rarely report basis to IRS"
+        )
+    
+    with col3:
+        pdf_generation_mode = st.selectbox(
+            "PDF Generation Mode",
+            [
+                "High-Quality Complete PDF",
+                "Official IRS Form Template",
+                "Custom Professional Layout"
+            ],
+            index=0,
+            help="Choose how you want your PDF generated"
         )
     
     # File Upload Section
@@ -325,20 +319,21 @@ def main():
                     return
                 
                 with st.spinner("Generating official Form 8949 PDFs from Bitwave data..."):
-                    pdf_files = generate_all_forms(
+                    pdf_files = generate_all_forms_enhanced(
                         short_term, 
                         long_term, 
                         taxpayer_name, 
                         taxpayer_ssn, 
                         tax_year, 
-                        default_box_type
+                        default_box_type,
+                        pdf_generation_mode
                     )
                 
                 if pdf_files:
                     if len(pdf_files) == 1:
                         # Single PDF download
                         st.download_button(
-                            label="📥 Download Form 8949",
+                            label="📥 Download Complete Form 8949 PDF",
                             data=pdf_files[0]['content'],
                             file_name=pdf_files[0]['filename'],
                             mime="application/pdf"
@@ -353,7 +348,7 @@ def main():
                             mime="application/zip"
                         )
                     
-                    st.success(f"✅ Generated {len(pdf_files)} Form 8949 PDF(s) successfully from Bitwave data!")
+                    st.success(f"✅ Generated {len(pdf_files)} high-quality Form 8949 PDF(s) successfully from Bitwave data!")
                     
                     # Show summary of what was generated
                     if short_term:
@@ -555,22 +550,6 @@ def process_bitwave_transactions_fixed(df, tax_year, proceeds_column, exchange_r
     if filtered_out_count > 0:
         st.info(f"📅 Filtered out {filtered_out_count} transactions outside tax year {tax_year}")
     
-    # Debug information about what failed
-    if error_count > 0 and processed_count == 0:
-        st.error("🔍 **DEBUG INFO**: All transactions failed processing. Common issues:")
-        st.write("• Date conversion problems with timestamp formats")
-        st.write("• Missing or invalid timestamp fields") 
-        st.write("• Data type mismatches")
-        st.write("• Missing proceeds calculation data")
-        st.write("Check the validation warnings above for specific errors.")
-    
-    # Information about tax year filtering
-    if filtered_out_count > 0 and processed_count == 0:
-        st.warning(f"🗓️ **TAX YEAR FILTER**: No transactions found for {tax_year}")
-        st.write(f"• {filtered_out_count} transactions were outside the {tax_year} tax year")
-        st.write("• Try selecting a different tax year that matches your transaction dates")
-        st.write("• Check the sample data above to see the transaction dates in your file")
-    
     return transactions, validation_warnings
 
 def clean_bitwave_currency_value(value):
@@ -606,40 +585,42 @@ def separate_bitwave_transactions_by_term(transactions):
     long_term = [t for t in transactions if not t['is_short_term']]
     return short_term, long_term
 
-def generate_all_forms(short_term, long_term, taxpayer_name, taxpayer_ssn, tax_year, default_box_type):
-    """Generate all required Form 8949 PDFs"""
+def generate_all_forms_enhanced(short_term, long_term, taxpayer_name, taxpayer_ssn, tax_year, default_box_type, pdf_mode):
+    """Generate all required Form 8949 PDFs with enhanced options"""
     pdf_files = []
     
     # Generate short-term forms (Part I)
     if short_term:
-        short_term_pdfs = generate_form_8949_pages(
+        short_term_pdfs = generate_form_8949_pages_enhanced(
             short_term,
             "Part I",
             taxpayer_name,
             taxpayer_ssn,
             tax_year,
             default_box_type,
-            "Short_Term"
+            "Short_Term",
+            pdf_mode
         )
         pdf_files.extend(short_term_pdfs)
     
     # Generate long-term forms (Part II)
     if long_term:
-        long_term_pdfs = generate_form_8949_pages(
+        long_term_pdfs = generate_form_8949_pages_enhanced(
             long_term,
             "Part II",
             taxpayer_name,
             taxpayer_ssn,
             tax_year,
             default_box_type,
-            "Long_Term"
+            "Long_Term",
+            pdf_mode
         )
         pdf_files.extend(long_term_pdfs)
     
     return pdf_files
 
-def generate_form_8949_pages(transactions, part_type, taxpayer_name, taxpayer_ssn, tax_year, box_type, term_suffix):
-    """Generate Form 8949 pages for a set of transactions"""
+def generate_form_8949_pages_enhanced(transactions, part_type, taxpayer_name, taxpayer_ssn, tax_year, box_type, term_suffix, pdf_mode):
+    """Generate Form 8949 pages with enhanced PDF handling"""
     pdf_files = []
     
     # Split transactions into pages (14 per page maximum)
@@ -654,23 +635,35 @@ def generate_form_8949_pages(transactions, part_type, taxpayer_name, taxpayer_ss
         # Create PDF for this page
         buffer = io.BytesIO()
         
-        # Try official template first, fallback to custom if needed
-        success = create_form_with_official_template(
-            buffer, page_transactions, part_type, taxpayer_name, 
-            taxpayer_ssn, tax_year, box_type, page_num + 1, total_pages, transactions
-        )
+        # Choose PDF generation method based on mode
+        if pdf_mode == "High-Quality Complete PDF":
+            success = create_high_quality_complete_pdf(
+                buffer, page_transactions, part_type, taxpayer_name,
+                taxpayer_ssn, tax_year, box_type, page_num + 1, total_pages, transactions
+            )
+        elif pdf_mode == "Official IRS Form Template":
+            success = create_form_with_official_template_enhanced(
+                buffer, page_transactions, part_type, taxpayer_name, 
+                taxpayer_ssn, tax_year, box_type, page_num + 1, total_pages, transactions
+            )
+        else:  # Custom Professional Layout
+            success = create_professional_custom_form(
+                buffer, page_transactions, part_type, taxpayer_name,
+                taxpayer_ssn, tax_year, box_type, page_num + 1, total_pages, transactions
+            )
         
         if not success:
-            create_custom_form_8949(
+            # Fallback to custom form
+            create_professional_custom_form(
                 buffer, page_transactions, part_type, taxpayer_name,
                 taxpayer_ssn, tax_year, box_type, page_num + 1, total_pages, transactions
             )
         
         # Generate filename
         if total_pages == 1:
-            filename = f"Form_8949_{tax_year}_{term_suffix}_Bitwave_{taxpayer_name.replace(' ', '_')}.pdf"
+            filename = f"Form_8949_{tax_year}_{term_suffix}_Complete_{taxpayer_name.replace(' ', '_')}.pdf"
         else:
-            filename = f"Form_8949_{tax_year}_{term_suffix}_Page_{page_num + 1}_Bitwave_{taxpayer_name.replace(' ', '_')}.pdf"
+            filename = f"Form_8949_{tax_year}_{term_suffix}_Page_{page_num + 1}_Complete_{taxpayer_name.replace(' ', '_')}.pdf"
         
         pdf_files.append({
             'filename': filename,
@@ -679,314 +672,15 @@ def generate_form_8949_pages(transactions, part_type, taxpayer_name, taxpayer_ss
     
     return pdf_files
 
-def create_form_with_official_template(buffer, transactions, part_type, taxpayer_name, taxpayer_ssn, tax_year, box_type, page_num, total_pages, all_transactions):
-    """Create Form 8949 using official IRS template with coordinates for perfect alignment"""
+def create_high_quality_complete_pdf(buffer, transactions, part_type, taxpayer_name, taxpayer_ssn, tax_year, box_type, page_num, total_pages, all_transactions):
+    """Create a high-quality, complete PDF with all data in one unified document"""
     try:
-        # Get official IRS Form 8949 PDF
-        official_pdf = get_official_form_8949(tax_year)
-        if not official_pdf:
-            return False
+        from reportlab.lib.units import inch
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
         
-        # Read the official PDF
-        official_pdf_stream = io.BytesIO(official_pdf)
-        pdf_reader = PyPDF2.PdfReader(official_pdf_stream)
-        
-        # Select appropriate page (Part I = page 1, Part II = page 2)
-        template_page_num = 0 if part_type == "Part I" else 1
-        if template_page_num >= len(pdf_reader.pages):
-            template_page_num = 0
-        
-        template_page = pdf_reader.pages[template_page_num]
-        
-        # Create overlay with transaction data
-        overlay_buffer = io.BytesIO()
-        c = canvas.Canvas(overlay_buffer, pagesize=letter)
-        width, height = letter
-        
-        # Taxpayer information and positioning for different pages
-        if part_type == "Part I":
-            # Part I (Page 1) positioning
-            name_field_x = 75
-            name_field_y = 690
-            ssn_field_x = 550
-            ssn_field_y = 690
-            checkbox_base_y = 552
-            table_start_y = 425
-        else:  # Part II
-            # Part II (Page 2) positioning
-            name_field_x = 75
-            name_field_y = 725
-            ssn_field_x = 550
-            ssn_field_y = 725
-            checkbox_base_y = 587
-            table_start_y = 465
-        
-        checkbox_x = 52
-        
-        # Column positions - aligned with form structure
-        col_positions = {
-            'description': 50,
-            'date_acquired': 195,
-            'date_sold': 255,
-            'proceeds': 330,
-            'cost_basis': 400,
-            'code': 455,
-            'adjustment': 495,
-            'gain_loss': 565
-        }
-        
-        # Row spacing to match form's ruled line spacing
-        row_height = 24.0
-        
-        # Fill taxpayer information
-        c.setFont("Helvetica", 10)
-        c.drawString(name_field_x, name_field_y, taxpayer_name[:40])
-        c.drawRightString(ssn_field_x, ssn_field_y, taxpayer_ssn)
-        
-        # Check appropriate box
-        c.setFont("Helvetica", 12)
-        box_letter = box_type.split()[1]  # Extract A, B, or C
-        
-        if part_type == "Part I":
-            if box_letter == "A":
-                c.drawString(checkbox_x, checkbox_base_y, "✓")
-            elif box_letter == "B": 
-                c.drawString(checkbox_x, checkbox_base_y - 20, "✓")
-            elif box_letter == "C":
-                c.drawString(checkbox_x, checkbox_base_y - 40, "✓")
-        else:  # Part II - maps A->D, B->E, C->F
-            if box_letter == "A":  # Maps to Box D for long-term
-                c.drawString(checkbox_x, checkbox_base_y, "✓")
-            elif box_letter == "B":  # Maps to Box E for long-term
-                c.drawString(checkbox_x, checkbox_base_y - 20, "✓")
-            elif box_letter == "C":  # Maps to Box F for long-term
-                c.drawString(checkbox_x, checkbox_base_y - 40, "✓")
-        
-        # Font size for clean cell fit
-        c.setFont("Helvetica", 5.5)
-        
-        # Fill transaction data with precise alignment
-        for i, transaction in enumerate(transactions[:14]):  # Maximum 14 transactions per page
-            y_pos = table_start_y - (i * row_height)
-            
-            # Format and truncate data to fit within column boundaries
-            description = transaction['description'][:20]
-            date_acquired = transaction['date_acquired'].strftime('%m/%d/%Y')
-            date_sold = transaction['date_sold'].strftime('%m/%d/%Y')
-            
-            # Column (a) - Description: Left-aligned, truncated to fit
-            c.drawString(col_positions['description'], y_pos, description)
-            
-            # Column (b) - Date acquired: Centered precisely
-            date_acq_width = c.stringWidth(date_acquired)
-            c.drawString(col_positions['date_acquired'] - date_acq_width/2, y_pos, date_acquired)
-            
-            # Column (c) - Date sold: Centered precisely
-            date_sold_width = c.stringWidth(date_sold)
-            c.drawString(col_positions['date_sold'] - date_sold_width/2, y_pos, date_sold)
-            
-            # Column (d) - Proceeds: Right-aligned within column boundaries
-            proceeds_text = f"{transaction['proceeds']:,.2f}"
-            if c.stringWidth(proceeds_text) > 65:
-                proceeds_text = f"{transaction['proceeds']:,.0f}"
-            c.drawRightString(col_positions['proceeds'], y_pos, proceeds_text)
-            
-            # Column (e) - Cost basis: Right-aligned within column boundaries
-            basis_text = f"{transaction['cost_basis']:,.2f}"
-            if c.stringWidth(basis_text) > 65:
-                basis_text = f"{transaction['cost_basis']:,.0f}"
-            c.drawRightString(col_positions['cost_basis'], y_pos, basis_text)
-            
-            # Column (f) - Code: Leave blank for crypto transactions
-            
-            # Column (g) - Adjustment: Leave blank (no adjustments for crypto)
-            
-            # Column (h) - Gain/Loss: Right-aligned with proper formatting
-            gain_loss = transaction['gain_loss']
-            if gain_loss < 0:
-                gain_loss_text = f"({abs(gain_loss):,.2f})"
-            else:
-                gain_loss_text = f"{gain_loss:,.2f}"
-            
-            # Check width and truncate if necessary
-            if c.stringWidth(gain_loss_text) > 70:
-                if gain_loss < 0:
-                    gain_loss_text = f"({abs(gain_loss):,.0f})"
-                else:
-                    gain_loss_text = f"{gain_loss:,.0f}"
-            
-            c.drawRightString(col_positions['gain_loss'], y_pos, gain_loss_text)
-        
-        # Add totals on final page - positioned in official totals row
-        if page_num == total_pages and len(transactions) > 0:
-            # Position totals in the official "Totals" row at bottom of table
-            totals_y = table_start_y - (14 * row_height) - 15
-            
-            # Calculate totals for ALL transactions
-            total_proceeds = sum(t['proceeds'] for t in all_transactions)
-            total_basis = sum(t['cost_basis'] for t in all_transactions)
-            total_gain_loss = sum(t['gain_loss'] for t in all_transactions)
-            
-            # Use slightly larger bold font for totals
-            c.setFont("Helvetica-Bold", 6)
-            
-            # Draw totals with same column alignment
-            total_proceeds_text = f"{total_proceeds:,.2f}"
-            total_basis_text = f"{total_basis:,.2f}"
-            
-            c.drawRightString(col_positions['proceeds'], totals_y, total_proceeds_text)
-            c.drawRightString(col_positions['cost_basis'], totals_y, total_basis_text)
-            
-            # Format total gain/loss
-            if total_gain_loss < 0:
-                total_gl_text = f"({abs(total_gain_loss):,.2f})"
-            else:
-                total_gl_text = f"{total_gain_loss:,.2f}"
-            c.drawRightString(col_positions['gain_loss'], totals_y, total_gl_text)
-        
-        c.save()
-        
-        # Merge overlay with official template
-        overlay_buffer.seek(0)
-        overlay_reader = PyPDF2.PdfReader(overlay_buffer)
-        overlay_page = overlay_reader.pages[0]
-        
-        # Combine template and data overlay
-        template_page.merge_page(overlay_page)
-        
-        # Write final PDF to buffer
-        pdf_writer = PyPDF2.PdfWriter()
-        pdf_writer.add_page(template_page)
-        pdf_writer.write(buffer)
-        
-        return True
-        
-    except Exception as e:
-        st.error(f"Error creating form with official template: {e}")
-        return False
-
-def get_official_form_8949(tax_year):
-    """Download official IRS Form 8949 for the specified tax year"""
-    irs_urls = {
-        2024: "https://www.irs.gov/pub/irs-pdf/f8949.pdf",
-        2023: "https://www.irs.gov/pub/irs-prior/f8949--2023.pdf",
-        2022: "https://www.irs.gov/pub/irs-prior/f8949--2022.pdf",
-        2021: "https://www.irs.gov/pub/irs-prior/f8949--2021.pdf",
-        2020: "https://www.irs.gov/pub/irs-prior/f8949--2020.pdf"
-    }
-    
-    url = irs_urls.get(tax_year, irs_urls[2024])
-    
-    try:
-        response = requests.get(url, timeout=15)
-        if response.status_code == 200:
-            return response.content
-    except Exception as e:
-        st.warning(f"Could not download official form: {e}")
-    
-    return None
-
-def create_custom_form_8949(buffer, transactions, part_type, taxpayer_name, taxpayer_ssn, tax_year, box_type, page_num, total_pages, all_transactions):
-    """Create custom Form 8949 if official template fails"""
-    c = canvas.Canvas(buffer, pagesize=letter)
-    width, height = letter
-    
-    # Form header
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, height - 50, f"Form 8949 ({tax_year})")
-    c.setFont("Helvetica", 12)
-    c.drawString(200, height - 50, "Sales and Other Dispositions of Capital Assets")
-    
-    # Source attribution
-    c.setFont("Helvetica", 8)
-    c.drawString(50, height - 70, "Generated from Bitwave Actions Report")
-    
-    # Taxpayer information
-    c.setFont("Helvetica", 10)
-    c.drawString(50, height - 90, f"Name: {taxpayer_name}")
-    c.drawString(400, height - 90, f"SSN: {taxpayer_ssn}")
-    
-    # Part header
-    c.setFont("Helvetica-Bold", 12)
-    if part_type == "Part I":
-        c.drawString(50, height - 120, "Part I - Short-Term Capital Gains and Losses")
-    else:
-        c.drawString(50, height - 120, "Part II - Long-Term Capital Gains and Losses")
-    
-    # Box type
-    c.setFont("Helvetica", 10)
-    c.drawString(50, height - 140, f"☑ {box_type}")
-    
-    # Table headers
-    y_pos = height - 190
-    c.setFont("Helvetica-Bold", 8)
-    headers = [
-        ("Description", 50),
-        ("Date Acquired", 180),
-        ("Date Sold", 240),
-        ("Proceeds", 300),
-        ("Cost Basis", 370),
-        ("Code", 430),
-        ("Adjustment", 470),
-        ("Gain/Loss", 530)
-    ]
-    
-    for header, x_pos in headers:
-        c.drawString(x_pos, y_pos, header)
-    
-    # Draw table lines
-    c.line(40, y_pos - 5, width - 40, y_pos - 5)
-    
-    # Transaction data
-    c.setFont("Helvetica", 7)
-    for i, transaction in enumerate(transactions[:14]):
-        y_pos = height - 210 - (i * 15)
-        
-        data = [
-            (transaction['description'][:25], 50),
-            (transaction['date_acquired'].strftime('%m/%d/%Y'), 180),
-            (transaction['date_sold'].strftime('%m/%d/%Y'), 240),
-            (f"{transaction['proceeds']:,.2f}", 300),
-            (f"{transaction['cost_basis']:,.2f}", 370),
-            ("", 430),
-            ("", 470),
-            (f"{transaction['gain_loss']:,.2f}" if transaction['gain_loss'] >= 0 
-             else f"({abs(transaction['gain_loss']):,.2f})", 530)
-        ]
-        
-        for text, x_pos in data:
-            c.drawString(x_pos, y_pos, str(text))
-    
-    # Totals (on last page only)
-    if page_num == total_pages:
-        totals_y = height - 210 - (14 * 15) - 20
-        c.setFont("Helvetica-Bold", 8)
-        c.drawString(50, totals_y, "TOTALS")
-        
-        total_proceeds = sum(t['proceeds'] for t in all_transactions)
-        total_basis = sum(t['cost_basis'] for t in all_transactions)
-        total_gain_loss = sum(t['gain_loss'] for t in all_transactions)
-        
-        c.drawString(300, totals_y, f"{total_proceeds:,.2f}")
-        c.drawString(370, totals_y, f"{total_basis:,.2f}")
-        c.drawString(530, totals_y, f"{total_gain_loss:,.2f}" if total_gain_loss >= 0 
-                    else f"({abs(total_gain_loss):,.2f})")
-    
-    # Page footer
-    c.setFont("Helvetica", 8)
-    if total_pages > 1:
-        c.drawString(50, 30, f"Page {page_num} of {total_pages}")
-    c.drawRightString(width - 50, 30, f"Generated from Bitwave: {datetime.now().strftime('%m/%d/%Y')}")
-    
-    c.save()
-
-def create_zip_file(pdf_files):
-    """Create ZIP file containing all PDFs"""
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-        for pdf_file in pdf_files:
-            zip_file.writestr(pdf_file['filename'], pdf_file['content'])
-    return zip_buffer.getvalue()
-
-if __name__ == "__main__":
-    main()
+        # Create document with proper margins
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize
