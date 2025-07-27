@@ -56,7 +56,7 @@ def main():
     # Header
     st.markdown("""
     <div class="main-header">
-        <h1>📋 Bitwave Form 8949 Generator (Fixed)</h1>
+        <h1>📋 Bitwave Form 8949 Generator</h1>
         <p>This tool helps you convert a Bitwave actions report (csv file) to an official IRS Form 8949</p>
     </div>
     """, unsafe_allow_html=True)
@@ -68,7 +68,8 @@ def main():
         - **action**: Transaction type ('sell' transactions will be processed)
         - **asset**: Cryptocurrency symbol (e.g., "BTC", "ETH", "SOL")
         - **assetUnitAdj**: Amount of cryptocurrency sold (used for description)
-        - **timestampSEC**: Sale date as Unix timestamp in seconds
+        - **timestamp**: Sale date in format "YYYY-MM-DD HH:MM:SS UTC" or Unix timestamp
+        - **timestampSEC**: Alternative Unix timestamp field
         - **lotId**: Unique lot identifier for matching acquisitions
         - **lotAcquisitionTimestampSEC**: Acquisition timestamp in seconds
         - **fairMarketValueDisposed**: Fair market value at disposal (proceeds)
@@ -76,6 +77,12 @@ def main():
         - **shortTermGainLoss**: Short-term gain/loss from Bitwave
         - **longTermGainLoss**: Long-term gain/loss from Bitwave
         - **txnExchangeRate**: Exchange rate at transaction time (backup for proceeds calculation)
+        
+        ### Timestamp Handling:
+        The script handles multiple timestamp formats:
+        - "2023-12-31 22:01:13 UTC" → "2023-12-31 22:01:13"
+        - Unix timestamps in seconds
+        - Automatic UTC removal and formatting
         
         ### Proceeds Calculation:
         The script will use **fairMarketValueDisposed** as proceeds, or calculate from **assetUnitAdj × txnExchangeRate** if needed.
@@ -94,6 +101,7 @@ def main():
         - ✅ Validates calculated gains against Bitwave's calculations
         - ✅ Generates official IRS Form 8949 with precise field mapping
         - ✅ Handles multiple pages and cryptocurrencies
+        - ✅ Flexible timestamp format handling
         """)
     
     # Taxpayer Information Section
@@ -158,9 +166,16 @@ def main():
             
             # Validate required columns for Bitwave format with flexible column matching
             required_bitwave_columns = [
-                'action', 'asset', 'assetUnitAdj', 'timestampSEC', 'lotId', 'lotAcquisitionTimestampSEC',
+                'action', 'asset', 'assetUnitAdj', 'lotId', 'lotAcquisitionTimestampSEC',
                 'shortTermGainLoss', 'longTermGainLoss', 'costBasisRelieved'
             ]
+            
+            # Check for timestamp columns (flexible matching)
+            timestamp_column = None
+            for col in df.columns:
+                if col in ['timestamp', 'timestampSEC', 'date', 'saleDate']:
+                    timestamp_column = col
+                    break
             
             # Check for proceeds-related columns
             proceeds_column = None
@@ -181,6 +196,9 @@ def main():
                 if col not in df.columns:
                     missing_columns.append(col)
             
+            if timestamp_column is None:
+                missing_columns.append('timestamp or timestampSEC')
+            
             if proceeds_column is None and exchange_rate_column is None:
                 missing_columns.append('fairMarketValueDisposed or txnExchangeRate')
             
@@ -190,7 +208,7 @@ def main():
                 return
             
             # Process Bitwave transactions
-            transactions, validation_warnings = process_bitwave_transactions_fixed(df, tax_year, proceeds_column, exchange_rate_column)
+            transactions, validation_warnings = process_bitwave_transactions_fixed(df, tax_year, proceeds_column, exchange_rate_column, timestamp_column)
             
             # Enhanced debugging information
             sell_count = len(df[df['action'] == 'sell'])
@@ -211,13 +229,22 @@ def main():
                 # Show overall date range in the data to help user select correct tax year
                 st.write("• **Date range analysis:**")
                 sell_sample = df[df['action'] == 'sell'].head(100)  # Sample for performance
-                earliest_ts = sell_sample['timestampSEC'].min()
-                latest_ts = sell_sample['timestampSEC'].max()
-                if pd.notna(earliest_ts) and pd.notna(latest_ts):
-                    earliest_date = pd.to_datetime(earliest_ts, unit='s')
-                    latest_date = pd.to_datetime(latest_ts, unit='s')
-                    st.write(f"  Sample shows transactions from {earliest_date.strftime('%m/%d/%Y')} to {latest_date.strftime('%m/%d/%Y')}")
-                    st.write(f"  Consider selecting tax year {earliest_date.year} or {latest_date.year}")
+                if timestamp_column in sell_sample.columns:
+                    # Try to parse sample timestamps for date range analysis
+                    sample_timestamps = []
+                    for ts in sell_sample[timestamp_column].dropna().head(10):
+                        try:
+                            parsed_date = parse_flexible_timestamp(ts)
+                            if parsed_date:
+                                sample_timestamps.append(parsed_date)
+                        except:
+                            continue
+                    
+                    if sample_timestamps:
+                        earliest_date = min(sample_timestamps)
+                        latest_date = max(sample_timestamps)
+                        st.write(f"  Sample shows transactions from {earliest_date.strftime('%m/%d/%Y')} to {latest_date.strftime('%m/%d/%Y')}")
+                        st.write(f"  Consider selecting tax year {earliest_date.year} or {latest_date.year}")
             
             if not transactions:
                 st.error("❌ No valid sell transactions could be processed from the Bitwave actions report.")
@@ -341,7 +368,44 @@ def main():
             st.error(f"❌ Error processing Bitwave actions report: {str(e)}")
             st.info("Please ensure you've uploaded a valid Bitwave actions CSV export.")
 
-def process_bitwave_transactions_fixed(df, tax_year, proceeds_column, exchange_rate_column):
+def parse_flexible_timestamp(timestamp_value):
+    """Parse timestamp in various formats and remove UTC suffix"""
+    if pd.isna(timestamp_value) or timestamp_value == '' or timestamp_value == 0:
+        return None
+    
+    # Convert to string for processing
+    ts_str = str(timestamp_value).strip()
+    
+    # Handle Unix timestamp (numeric)
+    try:
+        # If it's a pure number, treat as Unix timestamp
+        if ts_str.replace('.', '').isdigit():
+            unix_ts = float(ts_str)
+            # Handle both seconds and milliseconds timestamps
+            if unix_ts > 1e10:  # Likely milliseconds
+                unix_ts = unix_ts / 1000
+            return pd.to_datetime(unix_ts, unit='s')
+    except:
+        pass
+    
+    # Handle string timestamps
+    try:
+        # Remove UTC suffix if present
+        if ts_str.endswith(' UTC'):
+            ts_str = ts_str[:-4].strip()
+        
+        # Parse the cleaned timestamp
+        return pd.to_datetime(ts_str)
+    except:
+        pass
+    
+    # Last resort: try pandas flexible parsing
+    try:
+        return pd.to_datetime(timestamp_value, errors='coerce')
+    except:
+        return None
+
+def process_bitwave_transactions_fixed(df, tax_year, proceeds_column, exchange_rate_column, timestamp_column):
     """Fixed version: Process Bitwave actions report into standardized transaction format for specified tax year"""
     transactions = []
     validation_warnings = []
@@ -360,7 +424,8 @@ def process_bitwave_transactions_fixed(df, tax_year, proceeds_column, exchange_r
     st.info(f"Processing {len(sell_actions)} sell transactions from Bitwave actions report...")
     st.info(f"📅 Filtering for tax year {tax_year}: {tax_year_start.strftime('%B %d, %Y')} to {tax_year_end.strftime('%B %d, %Y')}")
     
-    # Show which columns we're using for proceeds calculation
+    # Show which columns we're using
+    st.info(f"🕐 Using '{timestamp_column}' column for sale dates")
     if proceeds_column:
         st.info(f"💰 Using '{proceeds_column}' column for proceeds")
     elif exchange_rate_column:
@@ -372,17 +437,14 @@ def process_bitwave_transactions_fixed(df, tax_year, proceeds_column, exchange_r
     
     for _, row in sell_actions.iterrows():
         try:
-            # Extract and validate dates with better error handling
+            # Extract and validate sale date using flexible timestamp parsing
             try:
-                # Use timestampSEC for sale date (Unix timestamp in seconds)
-                timestamp_sec = row['timestampSEC']
-                if pd.isna(timestamp_sec) or timestamp_sec == 0 or timestamp_sec == '':
-                    raise ValueError("Empty timestampSEC")
-                date_sold = pd.to_datetime(float(timestamp_sec), unit='s', errors='coerce')
-                if pd.isna(date_sold):
-                    raise ValueError("Invalid sale date conversion from timestampSEC")
+                timestamp_value = row[timestamp_column]
+                date_sold = parse_flexible_timestamp(timestamp_value)
+                if date_sold is None:
+                    raise ValueError(f"Could not parse timestamp: {timestamp_value}")
             except Exception as e:
-                validation_warnings.append(f"Invalid sale timestampSEC for transaction {row.get('txnId', 'unknown')}: {str(e)}")
+                validation_warnings.append(f"Invalid sale timestamp for transaction {row.get('txnId', 'unknown')}: {str(e)}")
                 error_count += 1
                 continue
             
@@ -411,7 +473,7 @@ def process_bitwave_transactions_fixed(df, tax_year, proceeds_column, exchange_r
                 filtered_out_count += 1
                 continue
             
-            # FIXED: Calculate proceeds using available columns
+            # Calculate proceeds using available columns
             proceeds = 0.0
             if proceeds_column and proceeds_column in row and not pd.isna(row[proceeds_column]):
                 proceeds = clean_bitwave_currency_value(row[proceeds_column])
@@ -496,7 +558,7 @@ def process_bitwave_transactions_fixed(df, tax_year, proceeds_column, exchange_r
     # Debug information about what failed
     if error_count > 0 and processed_count == 0:
         st.error("🔍 **DEBUG INFO**: All transactions failed processing. Common issues:")
-        st.write("• Date conversion problems with pandas")
+        st.write("• Date conversion problems with timestamp formats")
         st.write("• Missing or invalid timestamp fields") 
         st.write("• Data type mismatches")
         st.write("• Missing proceeds calculation data")
