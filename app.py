@@ -56,7 +56,7 @@ def main():
     # Header
     st.markdown("""
     <div class="main-header">
-        <h1>📋 Bitwave Form 8949 Generator</h1>
+        <h1>📋 Bitwave Form 8949 Generator (Fixed)</h1>
         <p>This tool helps you convert a Bitwave actions report (csv file) to an official IRS Form 8949</p>
     </div>
     """, unsafe_allow_html=True)
@@ -71,10 +71,14 @@ def main():
         - **timestampSEC**: Sale date as Unix timestamp in seconds
         - **lotId**: Unique lot identifier for matching acquisitions
         - **lotAcquisitionTimestampSEC**: Acquisition timestamp in seconds
-        - **proceeds**: Sale proceeds
+        - **fairMarketValueDisposed**: Fair market value at disposal (proceeds)
         - **costBasisRelieved**: Cost basis of sold assets
         - **shortTermGainLoss**: Short-term gain/loss from Bitwave
         - **longTermGainLoss**: Long-term gain/loss from Bitwave
+        - **txnExchangeRate**: Exchange rate at transaction time (backup for proceeds calculation)
+        
+        ### Proceeds Calculation:
+        The script will use **fairMarketValueDisposed** as proceeds, or calculate from **assetUnitAdj × txnExchangeRate** if needed.
         
         ### How to Export from Bitwave:
         1. Log into your Bitwave account
@@ -158,11 +162,18 @@ def main():
                 'shortTermGainLoss', 'longTermGainLoss', 'costBasisRelieved'
             ]
             
-            # Check for proceeds column - it might be named differently
+            # Check for proceeds-related columns
             proceeds_column = None
             for col in df.columns:
-                if 'proceeds' in col.lower():
+                if col in ['fairMarketValueDisposed', 'proceeds', 'saleProceeds', 'disposalValue']:
                     proceeds_column = col
+                    break
+            
+            # Check for exchange rate column as backup for proceeds calculation
+            exchange_rate_column = None
+            for col in df.columns:
+                if col in ['txnExchangeRate', 'exchangeRate', 'rate']:
+                    exchange_rate_column = col
                     break
             
             missing_columns = []
@@ -170,8 +181,8 @@ def main():
                 if col not in df.columns:
                     missing_columns.append(col)
             
-            if proceeds_column is None:
-                missing_columns.append('proceeds')
+            if proceeds_column is None and exchange_rate_column is None:
+                missing_columns.append('fairMarketValueDisposed or txnExchangeRate')
             
             if missing_columns:
                 st.error(f"❌ Missing required Bitwave columns: {', '.join(missing_columns)}")
@@ -179,7 +190,7 @@ def main():
                 return
             
             # Process Bitwave transactions
-            transactions, validation_warnings = process_bitwave_transactions(df, tax_year, proceeds_column)
+            transactions, validation_warnings = process_bitwave_transactions_fixed(df, tax_year, proceeds_column, exchange_rate_column)
             
             # Enhanced debugging information
             sell_count = len(df[df['action'] == 'sell'])
@@ -330,8 +341,8 @@ def main():
             st.error(f"❌ Error processing Bitwave actions report: {str(e)}")
             st.info("Please ensure you've uploaded a valid Bitwave actions CSV export.")
 
-def process_bitwave_transactions(df, tax_year, proceeds_column):
-    """Process Bitwave actions report into standardized transaction format for specified tax year"""
+def process_bitwave_transactions_fixed(df, tax_year, proceeds_column, exchange_rate_column):
+    """Fixed version: Process Bitwave actions report into standardized transaction format for specified tax year"""
     transactions = []
     validation_warnings = []
     
@@ -348,6 +359,12 @@ def process_bitwave_transactions(df, tax_year, proceeds_column):
     
     st.info(f"Processing {len(sell_actions)} sell transactions from Bitwave actions report...")
     st.info(f"📅 Filtering for tax year {tax_year}: {tax_year_start.strftime('%B %d, %Y')} to {tax_year_end.strftime('%B %d, %Y')}")
+    
+    # Show which columns we're using for proceeds calculation
+    if proceeds_column:
+        st.info(f"💰 Using '{proceeds_column}' column for proceeds")
+    elif exchange_rate_column:
+        st.info(f"💰 Calculating proceeds from assetUnitAdj × {exchange_rate_column}")
     
     processed_count = 0
     error_count = 0
@@ -394,8 +411,26 @@ def process_bitwave_transactions(df, tax_year, proceeds_column):
                 filtered_out_count += 1
                 continue
             
-            # Clean and parse monetary values from Bitwave format
-            proceeds = clean_bitwave_currency_value(row[proceeds_column])
+            # FIXED: Calculate proceeds using available columns
+            proceeds = 0.0
+            if proceeds_column and proceeds_column in row and not pd.isna(row[proceeds_column]):
+                proceeds = clean_bitwave_currency_value(row[proceeds_column])
+            elif exchange_rate_column and exchange_rate_column in row:
+                # Calculate proceeds from amount × exchange rate
+                asset_amount = abs(clean_bitwave_currency_value(row['assetUnitAdj']))
+                exchange_rate = clean_bitwave_currency_value(row[exchange_rate_column])
+                if asset_amount > 0 and exchange_rate > 0:
+                    proceeds = asset_amount * exchange_rate
+                else:
+                    validation_warnings.append(f"Cannot calculate proceeds for {row.get('txnId', 'unknown')}: assetUnitAdj={asset_amount}, rate={exchange_rate}")
+                    error_count += 1
+                    continue
+            else:
+                validation_warnings.append(f"No proceeds data available for transaction {row.get('txnId', 'unknown')}")
+                error_count += 1
+                continue
+            
+            # Get cost basis
             cost_basis = clean_bitwave_currency_value(row['costBasisRelieved'])
             
             # Get gain/loss from Bitwave's calculations
@@ -464,6 +499,7 @@ def process_bitwave_transactions(df, tax_year, proceeds_column):
         st.write("• Date conversion problems with pandas")
         st.write("• Missing or invalid timestamp fields") 
         st.write("• Data type mismatches")
+        st.write("• Missing proceeds calculation data")
         st.write("Check the validation warnings above for specific errors.")
     
     # Information about tax year filtering
