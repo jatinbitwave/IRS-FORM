@@ -582,7 +582,7 @@ def generate_form_8949_pages(transactions, part_type, taxpayer_name, taxpayer_ss
     return pdf_files
 
 def create_form_with_official_template(buffer, transactions, part_type, taxpayer_name, taxpayer_ssn, tax_year, box_type, page_num, total_pages, all_transactions):
-    """Create Form 8949 using official IRS template with CUSTOM coordinates for perfect alignment"""
+    """Create Form 8949 using official IRS template with coordinates for perfect alignment"""
     try:
         # Get official IRS Form 8949 PDF
         official_pdf = get_official_form_8949(tax_year)
@@ -605,9 +605,50 @@ def create_form_with_official_template(buffer, transactions, part_type, taxpayer
         c = canvas.Canvas(overlay_buffer, pagesize=letter)
         width, height = letter
         
-        # CUSTOM COORDINATES per your specifications
+        # Taxpayer information and positioning for different pages
+        if part_type == "Part I":
+            # Part I (Page 1) positioning
+            name_field_x = 75
+            name_field_y = 690
+            ssn_field_x = 550
+            ssn_field_y = 690
+            checkbox_base_y = 552
+            table_start_y = 425
+        else:  # Part II
+            # Part II (Page 2) positioning
+            name_field_x = 75
+            name_field_y = 725
+            ssn_field_x = 550
+            ssn_field_y = 725
+            checkbox_base_y = 587
+            table_start_y = 465
         
-        # CUSTOM taxpayer information and positioning for different pages
+        checkbox_x = 52
+        
+        # Column positions - aligned with form structure
+        col_positions = {
+            'description': 50,
+            'date_acquired': 195,
+            'date_sold': 255,
+            'proceeds': 330,
+            'cost_basis': 400,
+            'code': 455,
+            'adjustment': 495,
+            'gain_loss': 565
+        }
+        
+        # Row spacing to match form's ruled line spacing
+        row_height = 24.0
+        
+        # Fill taxpayer information
+        c.setFont("Helvetica", 10)
+        c.drawString(name_field_x, name_field_y, taxpayer_name[:40])
+        c.drawRightString(ssn_field_x, ssn_field_y, taxpayer_ssn)
+        
+        # Check appropriate box
+        c.setFont("Helvetica", 12)
+        box_letter = box_type.split()[1]  # Extract A, B, or C
+        
         if part_type == "Part I":
             if box_letter == "A":
                 c.drawString(checkbox_x, checkbox_base_y, "✓")
@@ -631,7 +672,7 @@ def create_form_with_official_template(buffer, transactions, part_type, taxpayer
             y_pos = table_start_y - (i * row_height)
             
             # Format and truncate data to fit within column boundaries
-            description = transaction['description'][:20]  # Strict limit for narrow column
+            description = transaction['description'][:20]
             date_acquired = transaction['date_acquired'].strftime('%m/%d/%Y')
             date_sold = transaction['date_sold'].strftime('%m/%d/%Y')
             
@@ -648,13 +689,13 @@ def create_form_with_official_template(buffer, transactions, part_type, taxpayer
             
             # Column (d) - Proceeds: Right-aligned within column boundaries
             proceeds_text = f"{transaction['proceeds']:,.2f}"
-            if c.stringWidth(proceeds_text) > 65:  # Column width limit
+            if c.stringWidth(proceeds_text) > 65:
                 proceeds_text = f"{transaction['proceeds']:,.0f}"
             c.drawRightString(col_positions['proceeds'], y_pos, proceeds_text)
             
             # Column (e) - Cost basis: Right-aligned within column boundaries
             basis_text = f"{transaction['cost_basis']:,.2f}"
-            if c.stringWidth(basis_text) > 65:  # Column width limit
+            if c.stringWidth(basis_text) > 65:
                 basis_text = f"{transaction['cost_basis']:,.0f}"
             c.drawRightString(col_positions['cost_basis'], y_pos, basis_text)
             
@@ -665,12 +706,12 @@ def create_form_with_official_template(buffer, transactions, part_type, taxpayer
             # Column (h) - Gain/Loss: Right-aligned with proper formatting
             gain_loss = transaction['gain_loss']
             if gain_loss < 0:
-                gain_loss_text = f"({abs(gain_loss):,.2f})"  # Parentheses for losses
+                gain_loss_text = f"({abs(gain_loss):,.2f})"
             else:
                 gain_loss_text = f"{gain_loss:,.2f}"
             
             # Check width and truncate if necessary
-            if c.stringWidth(gain_loss_text) > 70:  # Column width limit
+            if c.stringWidth(gain_loss_text) > 70:
                 if gain_loss < 0:
                     gain_loss_text = f"({abs(gain_loss):,.0f})"
                 else:
@@ -851,46 +892,3 @@ def create_zip_file(pdf_files):
 
 if __name__ == "__main__":
     main()
-            # Part I (Page 1) positioning
-            name_field_x = 75
-            name_field_y = 690           # Page 1 name height
-            ssn_field_x = 550
-            ssn_field_y = 690            # Page 1 SSN height
-            checkbox_base_y = 552        # Part I checkbox start at height 105
-            table_start_y = 425          # Part I table start at height 200
-        else:  # Part II
-            # Part II (Page 2) positioning
-            name_field_x = 75
-            name_field_y = 725            # Page 2 name height
-            ssn_field_x = 550
-            ssn_field_y = 725             # Page 2 SSN height
-            checkbox_base_y = 587        # Part II checkbox start at height 105
-            table_start_y = 465          # Part II table start at height 200
-        
-        checkbox_x = 52
-        
-        # Column positions - aligned with form structure
-        col_positions = {
-            'description': 50,      # Column (a) - fits within narrow left column
-            'date_acquired': 195,   # Column (b) - centered in date column
-            'date_sold': 255,       # Column (c) - centered in date column
-            'proceeds': 330,        # Column (d) - right-aligned within proceeds column
-            'cost_basis': 400,      # Column (e) - right-aligned within basis column  
-            'code': 455,            # Column (f) - centered in code column
-            'adjustment': 495,      # Column (g) - right-aligned in adjustment column
-            'gain_loss': 565        # Column (h) - right-aligned in gain/loss column
-        }
-        
-        # Row spacing to match form's ruled line spacing
-        row_height = 24.0  # Matches distance between horizontal ruled lines
-        
-        # Fill taxpayer information
-        c.setFont("Helvetica", 10)
-        c.drawString(name_field_x, name_field_y, taxpayer_name[:40])
-        c.drawRightString(ssn_field_x, ssn_field_y, taxpayer_ssn)
-        
-        # Check appropriate box
-        c.setFont("Helvetica", 12)
-        box_letter = box_type.split()[1]  # Extract A, B, or C
-        
-        if part_type == "Part I":
